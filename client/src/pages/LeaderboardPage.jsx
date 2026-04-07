@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Trophy, ArrowLeft, Crown, Medal, Award, Shield, Zap, Users } from 'lucide-react';
-import { getLeaderboard } from '../api';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Trophy, ArrowLeft, Crown, Medal, Award, Shield, Zap, Users, Lock } from 'lucide-react';
+import { getLeaderboard, adminGameState } from '../api';
 
 const PODIUM_CONFIG = [
   { rank: 2, icon: Medal, color: 'text-gray-300', bg: 'from-gray-400/15 to-gray-500/5', border: 'border-gray-400/20', glow: '', height: 'h-28', order: 'order-1', mt: 'mt-8' },
@@ -9,16 +9,39 @@ const PODIUM_CONFIG = [
   { rank: 3, icon: Award, color: 'text-amber-600', bg: 'from-amber-600/15 to-amber-700/5', border: 'border-amber-600/20', glow: '', height: 'h-24', order: 'order-3', mt: 'mt-10' },
 ];
 
-export default function LeaderboardPage({ team }) {
+export default function LeaderboardPage() {
+  const [sp] = useSearchParams();
+  const adminKey = sp.get('key') || '';
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
+    if (!adminKey) { setLoading(false); return; }
+    // Validate key by calling an admin endpoint
+    adminGameState(adminKey)
+      .then(() => { setAuthorized(true); })
+      .catch(() => { setLoading(false); });
+  }, [adminKey]);
+
+  useEffect(() => {
+    if (!authorized) return;
     const f = () => getLeaderboard().then((d) => { setData(d); setLoading(false); }).catch(() => setLoading(false));
     f();
     const i = setInterval(f, 10000);
     return () => clearInterval(i);
-  }, []);
+  }, [authorized]);
+
+  if (!adminKey || (!authorized && !loading)) return (
+    <div className="flex items-center justify-center h-screen bg-[#06060b]">
+      <div className="glass rounded-2xl p-8 max-w-md text-center border border-red-500/15">
+        <Lock className="w-14 h-14 text-red-400/60 mx-auto mb-4" />
+        <h2 className="text-white text-lg font-bold font-sora mb-2">Access Denied</h2>
+        <p className="text-gray-400 text-sm mb-5 font-mono">Leaderboard is admin-only. Contact your event organizer.</p>
+        <Link to="/" className="text-accent text-sm hover:underline font-mono">← Back to Challenge</Link>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#06060b] relative">
@@ -28,7 +51,7 @@ export default function LeaderboardPage({ team }) {
       <div className="glass-strong border-b border-dark-400/30 sticky top-0 z-10 relative">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link to="/rooms" className="w-9 h-9 rounded-xl bg-dark-600/80 hover:bg-dark-500 flex items-center justify-center text-gray-400 hover:text-white transition-all">
+            <Link to={`/admin?key=${adminKey}`} className="w-9 h-9 rounded-xl bg-dark-600/80 hover:bg-dark-500 flex items-center justify-center text-gray-400 hover:text-white transition-all">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="flex items-center gap-2.5">
@@ -99,9 +122,7 @@ export default function LeaderboardPage({ team }) {
                         <p className="text-white font-semibold text-sm font-sora truncate">{t.team_name}</p>
                         <p className="text-accent text-2xl font-bold font-sora mt-1">{t.total_score}</p>
                         <p className="text-gray-500 text-xs mt-1">{t.rooms_solved}/10 rooms</p>
-                        {team?.teamName === t.team_name && (
-                          <span className="inline-block mt-2 text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-semibold">You</span>
-                        )}
+
                       </div>
                       {/* Podium Bar */}
                       <div className={`w-full ${cfg.height} rounded-t-xl bg-gradient-to-t ${cfg.bg} mt-2 border-x ${cfg.border} border-t ${cfg.border} flex items-center justify-center`}>
@@ -132,11 +153,10 @@ export default function LeaderboardPage({ team }) {
                 </thead>
                 <tbody>
                   {data.map((t, i) => {
-                    const isMe = team?.teamName === t.team_name;
                     return (
                       <tr
                         key={i}
-                        className={`lb-row border-b border-dark-400/10 ${isMe ? 'bg-accent/[0.04]' : ''}`}
+                        className="lb-row border-b border-dark-400/10"
                       >
                         <td className="p-3 pl-4">
                           <span className={`inline-flex w-8 h-8 rounded-lg items-center justify-center text-xs font-bold rank-badge ${
@@ -148,7 +168,7 @@ export default function LeaderboardPage({ team }) {
                         </td>
                         <td className="p-3">
                           <span className="text-white font-medium">{t.team_name}</span>
-                          {isMe && <span className="text-accent text-[10px] ml-1.5 font-semibold">(You)</span>}
+
                         </td>
                         <td className="p-3 text-right text-gray-400 font-mono text-xs">{t.rooms_solved}/10</td>
                         <td className="p-3 pr-4 text-right text-accent font-bold font-sora">{t.total_score}</td>

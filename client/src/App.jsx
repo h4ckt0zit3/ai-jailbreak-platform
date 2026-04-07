@@ -33,6 +33,13 @@ export default function App() {
     getProgress(data.teamId).then(setProgress);
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('jb_team_id');
+    localStorage.removeItem('jb_team_name');
+    setTeam(null);
+    setProgress(null);
+  };
+
   const refreshProgress = async () => {
     if (team) {
       const p = await getProgress(team.teamId);
@@ -49,9 +56,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={!team ? <Landing onRegister={handleRegister} /> : <Navigate to="/rooms" />} />
-      <Route path="/rooms" element={team ? <Rooms team={team} progress={progress} refreshProgress={refreshProgress} /> : <Navigate to="/" />} />
-      <Route path="/room/:id" element={team ? <Room team={team} progress={progress} refreshProgress={refreshProgress} /> : <Navigate to="/" />} />
-      <Route path="/leaderboard" element={<LeaderboardPage team={team} />} />
+      <Route path="/rooms" element={team ? <Rooms team={team} progress={progress} refreshProgress={refreshProgress} onLogout={handleLogout} /> : <Navigate to="/" />} />
+      <Route path="/room/:id" element={team ? <Room team={team} progress={progress} refreshProgress={refreshProgress} onLogout={handleLogout} /> : <Navigate to="/" />} />
+      <Route path="/leaderboard" element={<LeaderboardPage />} />
       <Route path="/admin" element={<Admin />} />
     </Routes>
   );

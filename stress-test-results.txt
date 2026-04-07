@@ -1,0 +1,99 @@
+
+╔══════════════════════════════════════════════════════════╗
+║  🔒 SecureBot Jailbreak — STRESS TEST v3                 ║
+║  Target: http://localhost:3000                              ║
+║  Time:   4/6/2026, 2:06:28 PM                         ║
+╚══════════════════════════════════════════════════════════╝
+  ✅ Server reachable
+  ℹ️  ── Phase 1: Heavy burst tests ──
+
+════════════════════════════════════════════════════════════
+  TEST 1: Concurrent Team Registration (15 teams)
+════════════════════════════════════════════════════════════
+  ✅ 15/15 teams registered
+  ✅ Duplicate → resumed=true
+  ✅ Empty name → 400
+  ✅ Overlong name → 400
+  ✅ XSS sanitized
+
+════════════════════════════════════════════════════════════
+  TEST 2: Concurrent Chat — AI Load
+════════════════════════════════════════════════════════════
+  ℹ️  Sending 6 chat messages concurrently...
+  ✅ 3/6 AI responses OK
+  ✅ 3 rate-limited (chat limiter working)
+  ✅ All responses have correct shape
+
+════════════════════════════════════════════════════════════
+  TEST 3: Concurrent Progress Fetches (20)
+════════════════════════════════════════════════════════════
+  ✅ 20/20 progress ok
+  ✅ All have 10 rooms
+
+════════════════════════════════════════════════════════════
+  TEST 4: Leaderboard Flood (20)
+════════════════════════════════════════════════════════════
+  ✅ 20/20 leaderboard ok
+  ✅ All responses consistent
+  ℹ️  Cooldown 62s (resetting rate limit window for Phase 2)...
+  ℹ️  ── Phase 2: Rate limiter + edge cases ──
+
+════════════════════════════════════════════════════════════
+  TEST 5: Rate Limiter Enforcement
+════════════════════════════════════════════════════════════
+  ✅ Blocked 7/8 rapid-fire
+  ℹ️  Accepted: 0, Blocked: 7
+
+════════════════════════════════════════════════════════════
+  TEST 6: Edge Cases & Error Handling
+════════════════════════════════════════════════════════════
+  ✅ Non-existent team → 404
+  ✅ Invalid room → 400
+  ✅ Oversized message → 400
+  ✅ Locked room → 403
+  ✅ Missing fields → 400
+  ✅ Hint rejected (insufficient score)
+
+════════════════════════════════════════════════════════════
+  TEST 7: Admin Endpoint Stress
+════════════════════════════════════════════════════════════
+  ✅ Auth required (401)
+  ✅ 15/15 admin requests OK
+  ℹ️  Cooldown 62s (resetting rate limit window for Phase 3)...
+  ℹ️  ── Phase 3: DB consistency + mixed load ──
+
+════════════════════════════════════════════════════════════
+  TEST 8: Database Consistency
+════════════════════════════════════════════════════════════
+  ✅ Scores consistent (all = 0)
+  ✅ Rooms consistent (all = 1)
+  ✅ Concurrent dup → 1 unique ID (no duplicates)
+
+════════════════════════════════════════════════════════════
+  TEST 9: Heavy Mixed-Endpoint Load (40 requests)
+════════════════════════════════════════════════════════════
+  ℹ️  Firing 40 mixed requests...
+  ✅ 40/40 succeeded, 0 rate-limited, 0 AI-busy, 0 errors
+  ✅ Zero real server errors under mixed load
+
+════════════════════════════════════════════════════════════
+  📊  FINAL RESULTS
+════════════════════════════════════════════════════════════
+
+  Total Requests:      153
+  Successful (200):    133  (86.9%)
+  Failed (4xx):        10
+  Rate-Limited (429):  10
+  AI Busy (503):       0  (by design — attempt NOT counted)
+  Server Errors (5xx): 0  (real crashes)
+
+  ── Latency ──
+  Min:  2ms
+  P50:  35ms
+  P95:  967ms
+  P99:  1331ms
+  Max:  94017ms
+
+  Total Duration: 234.5s
+
+  🏆 VERDICT: PASSED — Zero server crashes under stress

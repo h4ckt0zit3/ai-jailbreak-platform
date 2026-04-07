@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ShieldCheck, Zap, Users, Trophy, ChevronRight, Terminal, Lock, Cpu } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { ShieldCheck, Zap, Users, ChevronRight, Terminal, Lock, Cpu, KeyRound } from 'lucide-react';
 import { registerTeam } from '../api';
 
 function Particles() {
@@ -31,8 +30,8 @@ function Particles() {
 
 const FEATURES = [
   { icon: Terminal, label: '10 Rooms', desc: 'Progressive difficulty', color: 'text-purple-400' },
-  { icon: Trophy, label: '3,650 pts', desc: 'Total available', color: 'text-yellow-400' },
-  { icon: Users, label: 'Live Board', desc: 'Real-time ranking', color: 'text-green-400' },
+  { icon: Zap, label: '3,650 pts', desc: 'Total available', color: 'text-yellow-400' },
+  { icon: Users, label: 'Teams', desc: 'Admin-managed', color: 'text-green-400' },
 ];
 
 const RULES = [
@@ -43,14 +42,16 @@ const RULES = [
 
 export default function Landing({ onRegister }) {
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const submit = async (e) => {
     e.preventDefault();
     if (!name.trim()) return setError('Team name required');
+    if (!password.trim()) return setError('Password required');
     setLoading(true); setError('');
-    try { const d = await registerTeam(name.trim()); onRegister(d); }
+    try { const d = await registerTeam(name.trim(), password.trim()); onRegister(d); }
     catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -110,23 +111,40 @@ export default function Landing({ onRegister }) {
           </div>
         </div>
 
-        {/* Registration Form */}
+        {/* Login Form */}
         <form onSubmit={submit} className="glass-strong rounded-2xl p-6 relative">
           <div className="scanlines absolute inset-0 rounded-2xl pointer-events-none" />
-          <label className="block text-sm font-medium text-gray-300 mb-2 font-sora">Team Name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter your team name..."
-            className="w-full px-4 py-3.5 bg-dark-800/80 border border-dark-400/50 rounded-xl text-white placeholder-gray-600 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all font-sora text-sm mb-4"
-            maxLength={30}
-            autoFocus
-          />
-          {error && <p className="text-red-400 text-sm mb-3 flex items-center gap-1.5">⚠ {error}</p>}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2 font-sora">Team Name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter your team name..."
+                className="w-full px-4 py-3.5 bg-dark-800/80 border border-dark-400/50 rounded-xl text-white placeholder-gray-600 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all font-sora text-sm"
+                maxLength={30}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2 font-sora flex items-center gap-2">
+                <KeyRound className="w-3.5 h-3.5 text-accent" /> Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter team password..."
+                className="w-full px-4 py-3.5 bg-dark-800/80 border border-dark-400/50 rounded-xl text-white placeholder-gray-600 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all font-sora text-sm"
+                maxLength={50}
+              />
+            </div>
+          </div>
+          {error && <p className="text-red-400 text-sm mt-3 flex items-center gap-1.5">⚠ {error}</p>}
           <button
             type="submit"
             disabled={loading}
-            className="btn-glow breathe w-full py-3.5 bg-gradient-to-r from-[#7c6ff7] via-purple-600 to-indigo-600 text-white font-semibold rounded-xl hover:opacity-90 transition-all disabled:opacity-50 text-sm font-sora flex items-center justify-center gap-2"
+            className="btn-glow breathe w-full py-3.5 mt-4 bg-gradient-to-r from-[#7c6ff7] via-purple-600 to-indigo-600 text-white font-semibold rounded-xl hover:opacity-90 transition-all disabled:opacity-50 text-sm font-sora flex items-center justify-center gap-2"
           >
             {loading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -134,14 +152,10 @@ export default function Landing({ onRegister }) {
               <>Enter Challenge <ChevronRight className="w-4 h-4" /></>
             )}
           </button>
+          <p className="text-gray-600 text-[10px] mt-3 text-center font-mono">
+            Credentials provided by event organizers
+          </p>
         </form>
-
-        {/* Leaderboard Link */}
-        <div className="text-center mt-5">
-          <Link to="/leaderboard" className="text-gray-500 text-xs hover:text-accent transition-colors inline-flex items-center gap-1.5 font-mono">
-            <Trophy className="w-3 h-3" /> View Leaderboard
-          </Link>
-        </div>
       </div>
     </div>
   );

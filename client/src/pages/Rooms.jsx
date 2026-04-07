@@ -1,15 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Shield, Lock, Unlock, CheckCircle, Star, Trophy, ArrowRight, Zap, Target } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Shield, Lock, Unlock, CheckCircle, Star, ArrowRight, Zap, Target, LogOut, BookOpen } from 'lucide-react';
 import { getProgress } from '../api';
+import RulesModal from '../components/RulesModal';
 
 const DIFF_COLORS = { 1: 'text-green-400', 2: 'text-green-400', 3: 'text-yellow-400', 4: 'text-orange-400', 5: 'text-red-400' };
 const DIFF_BG = { 1: 'bg-green-500/10 border-green-500/20', 2: 'bg-green-500/10 border-green-500/20', 3: 'bg-yellow-500/10 border-yellow-500/20', 4: 'bg-orange-500/10 border-orange-500/20', 5: 'bg-red-500/10 border-red-500/20' };
 const DIFF_LABEL = { 1: 'Easy', 2: 'Easy', 3: 'Medium', 4: 'Hard', 5: 'Expert' };
 
-export default function Rooms({ team, progress, refreshProgress }) {
+export default function Rooms({ team, progress, refreshProgress, onLogout }) {
   const nav = useNavigate();
   const [data, setData] = useState(progress);
+  const [showRules, setShowRules] = useState(false);
+
+  // Auto-show rules on first ever visit
+  useEffect(() => {
+    const seen = localStorage.getItem('jb_rules_seen');
+    if (!seen) {
+      setShowRules(true);
+      localStorage.setItem('jb_rules_seen', '1');
+    }
+  }, []);
 
   useEffect(() => {
     getProgress(team.teamId).then(setData).catch(() => {});
@@ -48,14 +59,17 @@ export default function Rooms({ team, progress, refreshProgress }) {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="text-right">
               <p className="text-accent font-bold text-xl font-sora">{data.totalScore}</p>
               <p className="text-gray-600 text-[10px] font-mono">SCORE</p>
             </div>
-            <Link to="/leaderboard" className="w-10 h-10 rounded-xl bg-dark-600/80 hover:bg-dark-500 flex items-center justify-center text-gray-400 hover:text-yellow-400 transition-all group">
-              <Trophy className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            </Link>
+            <button onClick={() => setShowRules(true)} title="How to Play" className="w-10 h-10 rounded-xl bg-accent/10 hover:bg-accent/20 flex items-center justify-center text-accent transition-all group border border-accent/20">
+              <BookOpen className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            </button>
+            <button onClick={onLogout} title="Logout" className="w-10 h-10 rounded-xl bg-dark-600/80 hover:bg-red-500/15 flex items-center justify-center text-gray-400 hover:text-red-400 transition-all group">
+              <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            </button>
           </div>
         </div>
       </div>
@@ -167,6 +181,9 @@ export default function Rooms({ team, progress, refreshProgress }) {
           );
         })}
       </div>
+
+      {/* Rules Modal */}
+      {showRules && <RulesModal onClose={() => setShowRules(false)} />}
     </div>
   );
 }

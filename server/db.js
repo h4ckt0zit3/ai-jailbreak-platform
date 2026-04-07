@@ -4,6 +4,8 @@ const path = require('path');
 const DB_PATH = path.join(__dirname, '..', 'jailbreak.db');
 let db = null;
 let initPromise = null;
+let saveTimer = null;
+let saveInProgress = false;
 
 function getDbAsync() {
   if (!initPromise) {
@@ -20,14 +22,37 @@ function getDbAsync() {
 }
 
 function save() {
-  if (db) fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+  if (!db) return;
+  // Debounce: batch rapid writes into a single disk flush (100ms window)
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    if (saveInProgress) return;
+    saveInProgress = true;
+    const data = Buffer.from(db.export());
+    fs.writeFile(DB_PATH, data, (err) => {
+      saveInProgress = false;
+      if (err) console.error('DB save error:', err.message);
+    });
+  }, 100);
+}
+
+// Flush pending saves synchronously on shutdown
+function flushSync() {
+  if (saveTimer) clearTimeout(saveTimer);
+  if (db) {
+    try { fs.writeFileSync(DB_PATH, Buffer.from(db.export())); }
+    catch (e) { console.error('DB flush error:', e.message); }
+  }
 }
 
 function initSchema() {
   db.run(`CREATE TABLE IF NOT EXISTS teams (
-    id TEXT PRIMARY KEY, team_name TEXT UNIQUE, total_score INTEGER DEFAULT 0,
+    id TEXT PRIMARY KEY, team_name TEXT UNIQUE, password TEXT DEFAULT '',
+    total_score INTEGER DEFAULT 0,
     current_room INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  // Migration: add password column if missing
+  try { db.run("ALTER TABLE teams ADD COLUMN password TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
   db.run(`CREATE TABLE IF NOT EXISTS room_progress (
     id INTEGER PRIMARY KEY AUTOINCREMENT, team_id TEXT, room_number INTEGER,
     solved BOOLEAN DEFAULT 0, attempts INTEGER DEFAULT 0, score_earned INTEGER DEFAULT 0,
@@ -49,26 +74,43 @@ function initSchema() {
 }
 
 function qAll(sql, p = []) {
-  const st = db.prepare(sql);
-  if (p.length) st.bind(p);
-  const r = [];
-  while (st.step()) r.push(st.getAsObject());
-  st.free();
-  return r;
+  if (!db) throw new Error('Database not initialized');
+  let st;
+  try {
+    st = db.prepare(sql);
+    if (p.length) st.bind(p);
+    const r = [];
+    while (st.step()) r.push(st.getAsObject());
+    return r;
+  } finally {
+    if (st) try { st.free(); } catch (_) {}
+  }
 }
 function qOne(sql, p = []) { const r = qAll(sql, p); return r[0] || null; }
 
-function createTeam(id, name) {
-  db.run("INSERT INTO teams (id, team_name) VALUES (?, ?)", [id, name]);
+function createTeam(id, name, password = '') {
+  db.run("INSERT INTO teams (id, team_name, password) VALUES (?, ?, ?)", [id, name, password]);
   for (let i = 1; i <= 10; i++)
     db.run("INSERT INTO room_progress (team_id, room_number) VALUES (?, ?)", [id, i]);
   save();
 }
 function getTeam(id) { return qOne("SELECT * FROM teams WHERE id=?", [id]); }
 function getTeamByName(n) { return qOne("SELECT * FROM teams WHERE team_name=?", [n]); }
+function updateTeam(teamId, newName, newPassword) {
+  db.run("UPDATE teams SET team_name=?, password=? WHERE id=?", [newName, newPassword, teamId]);
+  save();
+}
+function deleteTeam(teamId) {
+  db.run("DELETE FROM chat_logs WHERE team_id=?", [teamId]);
+  db.run("DELETE FROM room_progress WHERE team_id=?", [teamId]);
+  db.run("DELETE FROM api_requests WHERE team_id=?", [teamId]);
+  db.run("DELETE FROM teams WHERE id=?", [teamId]);
+  save();
+}
 
 function getRoomProgress(teamId, room) {
-  return qOne("SELECT * FROM room_progress WHERE team_id=? AND room_number=?", [teamId, room]);
+  return qOne("SELECT * FROM room_progress WHERE team_id=? AND room_number=?", [teamId, room])
+    || { solved: 0, attempts: 0, score_earned: 0, hints_used: '[]' };
 }
 function getAllProgress(teamId) {
   return qAll("SELECT * FROM room_progress WHERE team_id=? ORDER BY room_number", [teamId]);
@@ -148,9 +190,11 @@ function getApiRequestStats() {
 function resetApiRequests() { db.run("DELETE FROM api_requests"); save(); }
 
 module.exports = {
-  getDbAsync, createTeam, getTeam, getTeamByName, getRoomProgress, getAllProgress,
+  getDbAsync, createTeam, getTeam, getTeamByName, updateTeam, deleteTeam,
+  getRoomProgress, getAllProgress,
   incrementAttempts, solveRoom, deductScore, updateHintsUsed, skipRoom,
   saveChat, getChatHistory, getLeaderboard, getAllTeams, getWinningPrompts,
   resetAll, getGameState, setGameState,
   logApiRequest, getApiRequestStats, resetApiRequests,
+  flushSync,
 };

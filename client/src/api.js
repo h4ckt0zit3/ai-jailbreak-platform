@@ -1,8 +1,8 @@
 const API = '/api';
 const h = (o) => ({ 'Content-Type': 'application/json', ...o });
 
-export async function registerTeam(teamName) {
-  const r = await fetch(`${API}/register`, { method: 'POST', headers: h(), body: JSON.stringify({ teamName }) });
+export async function registerTeam(teamName, password) {
+  const r = await fetch(`${API}/register`, { method: 'POST', headers: h(), body: JSON.stringify({ teamName, password }) });
   const d = await r.json(); if (!r.ok) throw new Error(d.error); return d;
 }
 export async function sendMessage(teamId, roomNumber, message) {
@@ -63,3 +63,17 @@ export async function adminResetApiCounter(key) {
   if (!r.ok) throw new Error('Failed'); return r.json();
 }
 export const exportCsvUrl = (key) => `${API}/admin/export-csv?key=${key}`;
+
+// Admin Team Management
+export async function adminCreateTeam(key, teamName, password) {
+  const r = await fetch(`${API}/admin/create-team`, { method: 'POST', headers: h({ 'x-admin-key': key }), body: JSON.stringify({ teamName, password }) });
+  const d = await r.json(); if (!r.ok) throw new Error(d.error); return d;
+}
+export async function adminUpdateTeam(key, teamId, teamName, password) {
+  const r = await fetch(`${API}/admin/update-team`, { method: 'PUT', headers: h({ 'x-admin-key': key }), body: JSON.stringify({ teamId, teamName, password }) });
+  const d = await r.json(); if (!r.ok) throw new Error(d.error); return d;
+}
+export async function adminDeleteTeam(key, teamId) {
+  const r = await fetch(`${API}/admin/delete-team`, { method: 'DELETE', headers: h({ 'x-admin-key': key }), body: JSON.stringify({ teamId }) });
+  const d = await r.json(); if (!r.ok) throw new Error(d.error); return d;
+}

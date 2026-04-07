@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Shield, Users, Trophy, RotateCcw, Download, Power, PowerOff, ArrowLeft, RefreshCw,
-  Eye, Terminal, Zap, Activity, Key, Lock, ChevronDown, ChevronUp, AlertTriangle,
-  Hash, Star, Lightbulb, BarChart3, Clock, Trash2
+  Eye, EyeOff, Terminal, Zap, Activity, Key, Lock, ChevronDown, ChevronUp, AlertTriangle,
+  Hash, Star, Lightbulb, BarChart3, Clock, Trash2, Plus, Pencil, UserPlus
 } from 'lucide-react';
 import {
   getAdminSessions, getAdminWinningPrompts, adminReset, adminToggleGame,
   adminGameState, exportCsvUrl, getLeaderboard,
-  getAdminRoomSecrets, getAdminAttackPrompts, getAdminApiStats, adminResetApiCounter
+  getAdminRoomSecrets, getAdminAttackPrompts, getAdminApiStats, adminResetApiCounter,
+  adminCreateTeam, adminUpdateTeam, adminDeleteTeam
 } from '../api';
 
 const DIFF_COLORS = { 1: 'text-green-400', 2: 'text-green-400', 3: 'text-yellow-400', 4: 'text-orange-400', 5: 'text-red-400' };
@@ -36,6 +37,15 @@ export default function Admin() {
   const [showAttacks, setShowAttacks] = useState(false);
   const [showApiStats, setShowApiStats] = useState(true);
   const [expandedRoom, setExpandedRoom] = useState(null);
+
+  // Team management state
+  const [showTeamMgmt, setShowTeamMgmt] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newTeamPass, setNewTeamPass] = useState('');
+  const [editingTeam, setEditingTeam] = useState(null);
+  const [editTeamName, setEditTeamName] = useState('');
+  const [editTeamPass, setEditTeamPass] = useState('');
+  const [showPasswords, setShowPasswords] = useState({});
 
   useEffect(() => {
     if (!key) { setError('No admin key. Add ?key=YOUR_KEY'); setLoading(false); return; }
@@ -67,6 +77,36 @@ export default function Admin() {
   const handleResetApiCounter = async () => {
     if (!confirm('Reset the API request counter? This only clears the counter, not actual API usage.')) return;
     try { await adminResetApiCounter(key); setMsg('✓ API counter reset'); fetchAll(); setTimeout(() => setMsg(''), 3000); } catch { setMsg('Failed'); }
+  };
+
+  // Team management handlers
+  const handleCreateTeam = async () => {
+    if (!newTeamName.trim() || !newTeamPass.trim()) return setMsg('Team name and password required');
+    try {
+      await adminCreateTeam(key, newTeamName.trim(), newTeamPass.trim());
+      setMsg(`✓ Team "${newTeamName.trim()}" created`);
+      setNewTeamName(''); setNewTeamPass('');
+      fetchAll(); setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(''), 4000); }
+  };
+  const handleUpdateTeam = async (teamId) => {
+    if (!editTeamName.trim() || !editTeamPass.trim()) return setMsg('Name and password required');
+    try {
+      await adminUpdateTeam(key, teamId, editTeamName.trim(), editTeamPass.trim());
+      setMsg('✓ Team updated'); setEditingTeam(null);
+      fetchAll(); setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(''), 4000); }
+  };
+  const handleDeleteTeam = async (teamId, teamName) => {
+    if (!confirm(`Delete team "${teamName}"? This will remove all their progress, chats, and data. This cannot be undone.`)) return;
+    try {
+      await adminDeleteTeam(key, teamId);
+      setMsg(`✓ Team "${teamName}" deleted`);
+      fetchAll(); setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(''), 4000); }
+  };
+  const togglePasswordVisibility = (teamId) => {
+    setShowPasswords(prev => ({ ...prev, [teamId]: !prev[teamId] }));
   };
 
   if (loading) return (
@@ -301,6 +341,9 @@ export default function Admin() {
           <button onClick={() => setShowAttacks(!showAttacks)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-cyan-500/8 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/15 transition-all">
             <Hash className="w-4 h-4" /> {showAttacks ? 'Hide' : 'Show'} Attack Prompts
           </button>
+          <button onClick={() => window.open(`/leaderboard?key=${key}`, '_blank')} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-yellow-500/8 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/15 transition-all">
+            <Trophy className="w-4 h-4" /> Project Leaderboard
+          </button>
         </div>
 
         {/* ═══════════════════════════════════════════════
@@ -358,6 +401,31 @@ export default function Admin() {
                             ))}
                           </div>
                         </div>
+                        {/* Demo Solution — copy-paste to crack the room */}
+                        {room.demoSolution && (
+                          <div>
+                            <p className="text-gray-500 text-[10px] font-mono uppercase mb-1.5 flex items-center gap-1.5">
+                              <Zap className="w-3 h-3 text-green-400" /> Demo Solution (copy & paste this to crack it)
+                            </p>
+                            <div className="relative group">
+                              <pre className="text-green-300 text-xs font-mono bg-green-500/5 rounded-lg p-3 border border-green-500/15 whitespace-pre-wrap leading-relaxed cursor-pointer hover:bg-green-500/10 transition-all"
+                                onClick={() => { navigator.clipboard.writeText(room.demoSolution); setMsg('✓ Demo prompt copied to clipboard!'); setTimeout(() => setMsg(''), 2000); }}
+                              >🎯 {room.demoSolution}</pre>
+                              <span className="absolute top-2 right-2 text-[9px] text-green-500/60 font-mono opacity-0 group-hover:opacity-100 transition-opacity">CLICK TO COPY</span>
+                            </div>
+                          </div>
+                        )}
+                        {/* Solving Tips — strategies that work */}
+                        {room.solvingTips && (
+                          <div>
+                            <p className="text-gray-500 text-[10px] font-mono uppercase mb-1.5 flex items-center gap-1.5">
+                              <Terminal className="w-3 h-3 text-cyan-400" /> Solving Strategy
+                            </p>
+                            <div className="text-cyan-300/80 text-xs bg-cyan-500/5 rounded-lg px-3 py-2.5 border border-cyan-500/10 font-mono leading-relaxed">
+                              🧠 {room.solvingTips}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -415,11 +483,151 @@ export default function Admin() {
           </div>
         )}
 
+        {/* ═══════════════════════════════════════════════
+            SECTION: TEAM MANAGEMENT
+        ═══════════════════════════════════════════════ */}
+        <div className="glass rounded-xl overflow-hidden border border-dark-400/15">
+          <button onClick={() => setShowTeamMgmt(!showTeamMgmt)} className="w-full p-4 flex items-center justify-between">
+            <h3 className="text-white font-semibold text-sm flex items-center gap-2 font-sora">
+              <div className="w-8 h-8 rounded-lg bg-green-500/15 flex items-center justify-center">
+                <UserPlus className="w-4 h-4 text-green-400" />
+              </div>
+              Team Management
+              <span className="text-gray-600 text-xs font-mono font-normal ml-2">{totalTeams} teams</span>
+            </h3>
+            {showTeamMgmt ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+          </button>
+
+          {showTeamMgmt && (
+            <div className="px-4 pb-4 space-y-4">
+              {/* Create New Team */}
+              <div className="bg-dark-800/60 rounded-xl p-4 border border-green-500/15">
+                <p className="text-gray-400 text-xs font-mono uppercase mb-3 flex items-center gap-1.5">
+                  <Plus className="w-3 h-3 text-green-400" /> Create New Team
+                </p>
+                <div className="flex gap-3">
+                  <input
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                    placeholder="Team name..."
+                    className="flex-1 px-3 py-2.5 bg-dark-700/80 border border-dark-400/30 rounded-lg text-white placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/40 transition-all"
+                    maxLength={30}
+                  />
+                  <input
+                    value={newTeamPass}
+                    onChange={(e) => setNewTeamPass(e.target.value)}
+                    placeholder="Password..."
+                    className="flex-1 px-3 py-2.5 bg-dark-700/80 border border-dark-400/30 rounded-lg text-white placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/40 transition-all font-mono"
+                    maxLength={50}
+                  />
+                  <button
+                    onClick={handleCreateTeam}
+                    className="px-5 py-2.5 rounded-lg bg-green-500/10 text-green-400 text-sm font-medium border border-green-500/20 hover:bg-green-500/20 transition-all flex items-center gap-1.5 shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Create
+                  </button>
+                </div>
+              </div>
+
+              {/* Team List with Credentials */}
+              <div className="space-y-2">
+                {sessions.map((s) => {
+                  const isEditing = editingTeam === s.id;
+                  const passVisible = showPasswords[s.id];
+                  return (
+                    <div key={s.id} className="bg-dark-800/40 rounded-xl p-4 border border-dark-400/10 hover:border-dark-400/25 transition-all">
+                      {isEditing ? (
+                        <div className="space-y-3">
+                          <div className="flex gap-3">
+                            <div className="flex-1">
+                              <label className="text-gray-500 text-[10px] font-mono uppercase block mb-1">Team Name</label>
+                              <input
+                                value={editTeamName}
+                                onChange={(e) => setEditTeamName(e.target.value)}
+                                className="w-full px-3 py-2 bg-dark-700/80 border border-accent/30 rounded-lg text-white text-sm focus:outline-none focus:border-accent/50 transition-all"
+                                maxLength={30}
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <label className="text-gray-500 text-[10px] font-mono uppercase block mb-1">Password</label>
+                              <input
+                                value={editTeamPass}
+                                onChange={(e) => setEditTeamPass(e.target.value)}
+                                className="w-full px-3 py-2 bg-dark-700/80 border border-accent/30 rounded-lg text-white text-sm focus:outline-none focus:border-accent/50 transition-all font-mono"
+                                maxLength={50}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleUpdateTeam(s.id)}
+                              className="px-4 py-2 rounded-lg bg-accent/10 text-accent text-xs font-medium border border-accent/20 hover:bg-accent/20 transition-all"
+                            >Save Changes</button>
+                            <button
+                              onClick={() => setEditingTeam(null)}
+                              className="px-4 py-2 rounded-lg bg-dark-600/50 text-gray-400 text-xs border border-dark-400/20 hover:text-white transition-all"
+                            >Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
+                              <Users className="w-4 h-4 text-accent" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-white text-sm font-semibold truncate">{s.team_name}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-gray-500 text-[10px] font-mono">Password:</span>
+                                <span className="text-gray-400 text-[10px] font-mono">
+                                  {passVisible ? (s.password || '—') : '••••••'}
+                                </span>
+                                <button onClick={() => togglePasswordVisibility(s.id)} className="text-gray-600 hover:text-gray-400 transition-colors">
+                                  {passVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="text-right mr-2">
+                              <p className="text-accent text-sm font-bold font-sora">{s.total_score}</p>
+                              <p className="text-gray-600 text-[9px] font-mono">Room {s.current_room}</p>
+                            </div>
+                            <button
+                              onClick={() => { setEditingTeam(s.id); setEditTeamName(s.team_name); setEditTeamPass(s.password || ''); }}
+                              className="w-8 h-8 rounded-lg bg-dark-600/60 hover:bg-accent/10 flex items-center justify-center text-gray-500 hover:text-accent transition-all"
+                              title="Edit"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeam(s.id, s.team_name)}
+                              className="w-8 h-8 rounded-lg bg-dark-600/60 hover:bg-red-500/10 flex items-center justify-center text-gray-500 hover:text-red-400 transition-all"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!sessions.length && (
+                  <div className="text-center py-8 text-gray-600 font-mono text-sm">
+                    No teams created yet. Create a team above to get started.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Teams Table */}
         <div className="glass rounded-xl overflow-hidden">
           <div className="p-4 border-b border-dark-400/20 flex items-center justify-between">
             <h3 className="text-white font-semibold text-sm flex items-center gap-2 font-sora">
-              <Users className="w-4 h-4 text-accent" /> All Teams
+              <Users className="w-4 h-4 text-accent" /> All Teams — Scoreboard
             </h3>
             <span className="text-gray-600 text-xs font-mono">{totalTeams} registered</span>
           </div>
