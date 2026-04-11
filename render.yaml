@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ai-jailbreak-platform
+    runtime: node
+    buildCommand: npm run render-build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ADMIN_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false

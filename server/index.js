@@ -393,7 +393,7 @@ process.on('unhandledRejection', (reason) => {
 
 async function start() {
   await db.getDbAsync();
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🔒 SecureBot Challenge — 10 Rooms`);
     console.log(`   http://localhost:${PORT}`);
     console.log(`   Admin: http://localhost:${PORT}/admin?key=${ADMIN_KEY}`);
