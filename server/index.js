@@ -13,7 +13,13 @@ const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'JAIN2026ADMIN';
 
 // ── Security & Middleware ──
-app.use(cors());
+const corsOptions = {
+  origin: process.env.FRONTEND_URL
+    ? [process.env.FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000']
+    : true,  // Allow all in dev
+  credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));      // Prevent oversized payloads
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 

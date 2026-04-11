@@ -1,4 +1,6 @@
-const API = '/api';
+// In production (Vercel), VITE_API_URL points to Render backend
+// In development, falls back to '/api' (Vite proxy handles it)
+const API = import.meta.env.VITE_API_URL || '/api';
 const h = (o) => ({ 'Content-Type': 'application/json', ...o });
 
 export async function registerTeam(teamName, password) {

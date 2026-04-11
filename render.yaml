@@ -2,7 +2,7 @@ services:
   - type: web
     name: ai-jailbreak-platform
     runtime: node
-    buildCommand: npm run render-build
+    buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -12,4 +12,6 @@ services:
       - key: ADMIN_KEY
         sync: false
       - key: MONGO_URI
+        sync: false
+      - key: FRONTEND_URL
         sync: false
