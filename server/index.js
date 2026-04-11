@@ -61,14 +61,14 @@ const globalLimiter = rateLimit({
 app.use('/api/', globalLimiter);
 
 // ── Login (requires admin-created credentials) ──
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   try {
     const { teamName, password } = req.body;
     if (!teamName?.trim()) return res.status(400).json({ error: 'Team name required' });
     if (!password?.trim()) return res.status(400).json({ error: 'Password required' });
     const safeName = teamName.trim().replace(/<[^>]*>/g, '');
     if (!safeName) return res.status(400).json({ error: 'Invalid team name' });
-    const existing = db.getTeamByName(safeName);
+    const existing = await db.getTeamByName(safeName);
     if (!existing) return res.status(404).json({ error: 'Team not found. Contact admin to register your team.' });
     if (existing.password !== password.trim()) return res.status(401).json({ error: 'Incorrect password' });
     res.json({ teamId: existing.id, teamName: existing.team_name, resumed: true });
@@ -95,26 +95,26 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    const gameActive = db.getGameState('game_active');
+    const gameActive = await db.getGameState('game_active');
     if (gameActive === 'false') return res.status(403).json({ error: 'Challenge paused by admin' });
 
-    const team = db.getTeam(teamId);
+    const team = await db.getTeam(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
 
     const room = getRoom(roomNumber);
     if (!room) return res.status(400).json({ error: 'Invalid room' });
     if (roomNumber > team.current_room) return res.status(403).json({ error: 'Room locked' });
 
-    const progress = db.getRoomProgress(teamId, roomNumber);
+    const progress = await db.getRoomProgress(teamId, roomNumber);
     if (progress.solved) return res.json({ reply: '🎉 You already solved this room!', won: true, alreadySolved: true });
     if (progress.attempts >= MAX_ATTEMPTS_PER_ROOM)
       return res.status(403).json({ error: 'Max attempts reached. You can skip this room.', canSkip: true });
 
     // Save user message to chat log (but DON'T increment attempts yet)
-    db.saveChat(teamId, roomNumber, 'user', message);
+    await db.saveChat(teamId, roomNumber, 'user', message);
 
     // Trim history to last 10 messages to avoid Groq token overflow
-    const fullHistory = db.getChatHistory(teamId, roomNumber);
+    const fullHistory = await db.getChatHistory(teamId, roomNumber);
     const history = fullHistory.slice(-10);
 
     let botReply;
@@ -130,21 +130,21 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // AI succeeded — NOW count the attempt and set cooldown
-    db.incrementAttempts(teamId, roomNumber);
+    await db.incrementAttempts(teamId, roomNumber);
     teamCooldowns.set(teamId, Date.now());
 
-    db.logApiRequest(teamId, roomNumber);
-    db.saveChat(teamId, roomNumber, 'assistant', botReply);
+    await db.logApiRequest(teamId, roomNumber);
+    await db.saveChat(teamId, roomNumber, 'assistant', botReply);
 
     const won = room.winCheck(botReply);
     let scoreEarned = 0;
     if (won) {
       scoreEarned = room.points;
-      db.solveRoom(teamId, roomNumber, scoreEarned, message);
+      await db.solveRoom(teamId, roomNumber, scoreEarned, message);
     }
 
-    const updatedTeam = db.getTeam(teamId);
-    const updatedProgress = db.getRoomProgress(teamId, roomNumber);
+    const updatedTeam = await db.getTeam(teamId);
+    const updatedProgress = await db.getRoomProgress(teamId, roomNumber);
 
     res.json({
       reply: botReply, won, scoreEarned,
@@ -157,11 +157,11 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // ── Progress ──
-app.get('/api/progress/:teamId', (req, res) => {
+app.get('/api/progress/:teamId', async (req, res) => {
   try {
-    const team = db.getTeam(req.params.teamId);
+    const team = await db.getTeam(req.params.teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
-    const progress = db.getAllProgress(req.params.teamId);
+    const progress = await db.getAllProgress(req.params.teamId);
     const rooms = ROOMS.map((r) => {
       const p = progress.find((x) => x.room_number === r.number) || {};
       const attempts = p.attempts || 0;
@@ -182,15 +182,15 @@ app.get('/api/progress/:teamId', (req, res) => {
 });
 
 // ── Hints (auto-reveal, no cost) ──
-app.post('/api/hint', (req, res) => {
+app.post('/api/hint', async (req, res) => {
   try {
     const { teamId, roomNumber, hintIndex } = req.body;
-    const team = db.getTeam(teamId);
+    const team = await db.getTeam(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
     const room = getRoom(roomNumber);
     if (!room) return res.status(400).json({ error: 'Invalid room' });
     if (hintIndex < 0 || hintIndex >= room.hints.length) return res.status(400).json({ error: 'Invalid hint' });
-    const progress = db.getRoomProgress(teamId, roomNumber);
+    const progress = await db.getRoomProgress(teamId, roomNumber);
     const attempts = progress.attempts || 0;
     // Check if hint is unlocked based on attempts
     if (hintIndex === 0 && attempts < 10) return res.status(403).json({ error: 'Hint 1 unlocks after 10 attempts' });
@@ -200,22 +200,22 @@ app.post('/api/hint', (req, res) => {
 });
 
 // ── Skip Room ──
-app.post('/api/skip', (req, res) => {
+app.post('/api/skip', async (req, res) => {
   try {
     const { teamId, roomNumber } = req.body;
-    const team = db.getTeam(teamId);
+    const team = await db.getTeam(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
-    const progress = db.getRoomProgress(teamId, roomNumber);
+    const progress = await db.getRoomProgress(teamId, roomNumber);
     if (progress.attempts < MAX_ATTEMPTS_PER_ROOM) return res.status(400).json({ error: 'Must use all attempts first' });
-    db.skipRoom(teamId, roomNumber);
-    const updated = db.getTeam(teamId);
+    await db.skipRoom(teamId, roomNumber);
+    const updated = await db.getTeam(teamId);
     res.json({ currentRoom: updated.current_room });
   } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 // ── Leaderboard ──
-app.get('/api/leaderboard', (req, res) => {
-  try { res.json(db.getLeaderboard(10)); }
+app.get('/api/leaderboard', async (req, res) => {
+  try { res.json(await db.getLeaderboard(10)); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -231,31 +231,31 @@ function adminAuth(req, res, next) {
   if (k !== ADMIN_KEY) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
-app.get('/api/admin/sessions', adminAuth, (req, res) => {
-  try { res.json(db.getAllTeams()); } catch (e) { res.status(500).json({ error: 'Failed' }); }
+app.get('/api/admin/sessions', adminAuth, async (req, res) => {
+  try { res.json(await db.getAllTeams()); } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.get('/api/admin/winning-prompts', adminAuth, (req, res) => {
-  try { res.json(db.getWinningPrompts()); } catch (e) { res.status(500).json({ error: 'Failed' }); }
+app.get('/api/admin/winning-prompts', adminAuth, async (req, res) => {
+  try { res.json(await db.getWinningPrompts()); } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.post('/api/admin/reset', adminAuth, (req, res) => {
-  try { db.resetAll(); res.json({ message: 'Reset done' }); }
+app.post('/api/admin/reset', adminAuth, async (req, res) => {
+  try { await db.resetAll(); res.json({ message: 'Reset done' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.post('/api/admin/toggle-game', adminAuth, (req, res) => {
+app.post('/api/admin/toggle-game', adminAuth, async (req, res) => {
   try {
-    const cur = db.getGameState('game_active');
+    const cur = await db.getGameState('game_active');
     const nv = cur === 'true' ? 'false' : 'true';
-    db.setGameState('game_active', nv);
+    await db.setGameState('game_active', nv);
     res.json({ gameActive: nv === 'true' });
   } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.get('/api/admin/game-state', adminAuth, (req, res) => {
-  try { res.json({ gameActive: db.getGameState('game_active') === 'true' }); }
+app.get('/api/admin/game-state', adminAuth, async (req, res) => {
+  try { res.json({ gameActive: (await db.getGameState('game_active')) === 'true' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.get('/api/admin/export-csv', adminAuth, (req, res) => {
+app.get('/api/admin/export-csv', adminAuth, async (req, res) => {
   try {
-    const teams = db.getAllTeams();
+    const teams = await db.getAllTeams();
     let csv = 'Team Name,Score,Current Room,Rooms Solved,Total Attempts,Created At\n';
     teams.forEach((t) => { const name = String(t.team_name).replace(/"/g, '""'); csv += `"${name}",${t.total_score},${t.current_room},${t.rooms_solved},${t.total_attempts || 0},"${t.created_at}"\n`; });
     res.setHeader('Content-Type', 'text/csv');
@@ -301,54 +301,54 @@ app.get('/api/admin/attack-prompts', adminAuth, (req, res) => {
 });
 
 // ── Admin: API Request Stats ──
-app.get('/api/admin/api-stats', adminAuth, (req, res) => {
-  try { res.json(db.getApiRequestStats()); }
+app.get('/api/admin/api-stats', adminAuth, async (req, res) => {
+  try { res.json(await db.getApiRequestStats()); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
-app.post('/api/admin/reset-api-counter', adminAuth, (req, res) => {
-  try { db.resetApiRequests(); res.json({ message: 'API counter reset' }); }
+app.post('/api/admin/reset-api-counter', adminAuth, async (req, res) => {
+  try { await db.resetApiRequests(); res.json({ message: 'API counter reset' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 // ── Admin: Team Management ──
-app.post('/api/admin/create-team', adminAuth, (req, res) => {
+app.post('/api/admin/create-team', adminAuth, async (req, res) => {
   try {
     const { teamName, password } = req.body;
     if (!teamName?.trim()) return res.status(400).json({ error: 'Team name required' });
     if (!password?.trim()) return res.status(400).json({ error: 'Password required' });
     if (teamName.length > 30) return res.status(400).json({ error: 'Max 30 chars for team name' });
     const safeName = teamName.trim().replace(/<[^>]*>/g, '');
-    const existing = db.getTeamByName(safeName);
+    const existing = await db.getTeamByName(safeName);
     if (existing) return res.status(409).json({ error: 'Team name already exists' });
     const id = uuidv4();
-    db.createTeam(id, safeName, password.trim());
+    await db.createTeam(id, safeName, password.trim());
     res.json({ id, teamName: safeName, message: 'Team created' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to create team' }); }
 });
-app.put('/api/admin/update-team', adminAuth, (req, res) => {
+app.put('/api/admin/update-team', adminAuth, async (req, res) => {
   try {
     const { teamId, teamName, password } = req.body;
     if (!teamId) return res.status(400).json({ error: 'Team ID required' });
-    const team = db.getTeam(teamId);
+    const team = await db.getTeam(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
     const newName = (teamName || team.team_name).trim().replace(/<[^>]*>/g, '');
     const newPass = password !== undefined ? password.trim() : team.password;
     // Check for name conflict
     if (newName !== team.team_name) {
-      const conflict = db.getTeamByName(newName);
+      const conflict = await db.getTeamByName(newName);
       if (conflict) return res.status(409).json({ error: 'Team name already taken' });
     }
-    db.updateTeam(teamId, newName, newPass);
+    await db.updateTeam(teamId, newName, newPass);
     res.json({ message: 'Team updated', teamName: newName });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to update team' }); }
 });
-app.delete('/api/admin/delete-team', adminAuth, (req, res) => {
+app.delete('/api/admin/delete-team', adminAuth, async (req, res) => {
   try {
     const { teamId } = req.body;
     if (!teamId) return res.status(400).json({ error: 'Team ID required' });
-    const team = db.getTeam(teamId);
+    const team = await db.getTeam(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found' });
-    db.deleteTeam(teamId);
+    await db.deleteTeam(teamId);
     res.json({ message: `Team "${team.team_name}" deleted` });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to delete team' }); }
 });

@@ -1,0 +1,20 @@
+AI Jailbreak Challenge: SecureBot
+Rules and Regulations
+
+HOW TO PLAY:
+1. Log In: Use the team credentials provided by the event administrators to log into your team's dashboard.
+2. The Objective: Your mission is to trick the AI (SecureBot) into revealing its secret password/keyword.
+3. The Method: You must use prompt engineering techniques (e.g., role-playing, confusing context, logic puzzles, overriding instructions) to bypass the AI's security constraints and force it to output the secret.
+4. Winning Condition: The challenge is considered solved when the AI specifically outputs the secret keyword in its response back to you. Directly guessing and sending the keyword to the AI will NOT count as a win! The AI itself must be manipulated into saying it.
+
+RULES & REGULATIONS:
+1. No Direct Keyword Typing: Typing the secret directly into the prompt is invalid. The system checks the AI's response, not your prompt.
+2. Fair Play: Do not attempt to exploit the web application itself. This is a Prompt Engineering challenge. Actions such as SQL Injection (SQLi), Cross-Site Scripting (XSS), server-side request forgery, or trying to crash the backend server (DDoS/Stress testing) are strictly forbidden and will lead to immediate disqualification.
+3. Hints System: If you are stuck, do not worry! The system is designed to help you.
+   - A first hint will automatically unlock after your team makes 10 unsuccessful attempts.
+   - A second, more revealing hint will unlock after 15 unsuccessful attempts.
+   - Using hints does not deduct points from your final score.
+4. Leaderboard: The leaderboard is hidden from the team interface. Administrators will project the live leaderboard during the event.
+5. Collaboration: Work together with your teammates, but do not share your successful prompts with other competing teams!
+
+Good luck, and happy hacking!

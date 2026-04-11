@@ -1,193 +1,359 @@
-const initSqlJs = require('sql.js');
-const fs = require('fs');
-const path = require('path');
-const DB_PATH = path.join(__dirname, '..', 'jailbreak.db');
-let db = null;
-let initPromise = null;
-let saveTimer = null;
-let saveInProgress = false;
+require('dotenv').config();
+const mongoose = require('mongoose');
 
-function getDbAsync() {
-  if (!initPromise) {
-    initPromise = (async () => {
-      const SQL = await initSqlJs();
-      let buf = null;
-      if (fs.existsSync(DB_PATH)) buf = fs.readFileSync(DB_PATH);
-      db = buf ? new SQL.Database(buf) : new SQL.Database();
-      initSchema();
-      return db;
-    })();
-  }
-  return initPromise;
-}
+const MONGO_URI = process.env.MONGO_URI;
 
-function save() {
-  if (!db) return;
-  // Debounce: batch rapid writes into a single disk flush (100ms window)
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (saveInProgress) return;
-    saveInProgress = true;
-    const data = Buffer.from(db.export());
-    fs.writeFile(DB_PATH, data, (err) => {
-      saveInProgress = false;
-      if (err) console.error('DB save error:', err.message);
-    });
-  }, 100);
-}
+// ── Connection with retry logic ──
+let isConnected = false;
+const MAX_CONNECT_RETRIES = 5;
+const RETRY_DELAY_MS = 3000;
 
-// Flush pending saves synchronously on shutdown
-function flushSync() {
-  if (saveTimer) clearTimeout(saveTimer);
-  if (db) {
-    try { fs.writeFileSync(DB_PATH, Buffer.from(db.export())); }
-    catch (e) { console.error('DB flush error:', e.message); }
+async function connectWithRetry() {
+  for (let attempt = 1; attempt <= MAX_CONNECT_RETRIES; attempt++) {
+    try {
+      await mongoose.connect(MONGO_URI, {
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 30000,
+      });
+      isConnected = true;
+      console.log('✅ MongoDB connected');
+
+      mongoose.connection.on('disconnected', () => {
+        console.warn('⚠️ MongoDB disconnected — will auto-reconnect');
+        isConnected = false;
+      });
+      mongoose.connection.on('reconnected', () => {
+        console.log('✅ MongoDB reconnected');
+        isConnected = true;
+      });
+      mongoose.connection.on('error', (err) => {
+        console.error('❌ MongoDB connection error:', err.message);
+      });
+      return;
+    } catch (err) {
+      console.error(`❌ MongoDB connect attempt ${attempt}/${MAX_CONNECT_RETRIES} failed:`, err.message);
+      if (attempt < MAX_CONNECT_RETRIES) {
+        console.log(`   Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        throw new Error('MongoDB connection failed after all retries');
+      }
+    }
   }
 }
 
-function initSchema() {
-  db.run(`CREATE TABLE IF NOT EXISTS teams (
-    id TEXT PRIMARY KEY, team_name TEXT UNIQUE, password TEXT DEFAULT '',
-    total_score INTEGER DEFAULT 0,
-    current_room INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  // Migration: add password column if missing
-  try { db.run("ALTER TABLE teams ADD COLUMN password TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
-  db.run(`CREATE TABLE IF NOT EXISTS room_progress (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, team_id TEXT, room_number INTEGER,
-    solved BOOLEAN DEFAULT 0, attempts INTEGER DEFAULT 0, score_earned INTEGER DEFAULT 0,
-    hints_used TEXT DEFAULT '[]', solved_at DATETIME, winning_prompt TEXT,
-    UNIQUE(team_id, room_number)
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS chat_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, team_id TEXT, room_number INTEGER,
-    role TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS game_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-  db.run(`CREATE TABLE IF NOT EXISTS api_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team_id TEXT, room_number INTEGER,
-    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  const gs = qAll("SELECT value FROM game_state WHERE key='game_active'");
-  if (!gs.length) { db.run("INSERT INTO game_state (key,value) VALUES ('game_active','true')"); save(); }
+// ── Schemas ──
+const teamSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  team_name: { type: String, required: true, unique: true },
+  password: { type: String, default: '' },
+  total_score: { type: Number, default: 0 },
+  current_room: { type: Number, default: 1 },
+  created_at: { type: Date, default: Date.now }
+});
+
+const roomProgressSchema = new mongoose.Schema({
+  team_id: { type: String },
+  room_number: { type: Number },
+  solved: { type: Boolean, default: false },
+  attempts: { type: Number, default: 0 },
+  score_earned: { type: Number, default: 0 },
+  hints_used: { type: String, default: '[]' },
+  solved_at: { type: Date },
+  winning_prompt: { type: String }
+});
+roomProgressSchema.index({ team_id: 1, room_number: 1 }, { unique: true });
+
+const chatLogSchema = new mongoose.Schema({
+  team_id: { type: String },
+  room_number: { type: Number },
+  role: { type: String },
+  message: { type: String },
+  timestamp: { type: Date, default: Date.now }
+});
+chatLogSchema.index({ team_id: 1, room_number: 1, timestamp: 1 });
+
+const gameStateSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: String, required: true }
+});
+
+const apiRequestSchema = new mongoose.Schema({
+  team_id: { type: String },
+  room_number: { type: Number },
+  requested_at: { type: Date, default: Date.now }
+});
+apiRequestSchema.index({ requested_at: 1 });
+
+const Team = mongoose.model('Team', teamSchema);
+const RoomProgress = mongoose.model('RoomProgress', roomProgressSchema);
+const ChatLog = mongoose.model('ChatLog', chatLogSchema);
+const GameState = mongoose.model('GameState', gameStateSchema);
+const ApiRequest = mongoose.model('ApiRequest', apiRequestSchema);
+
+// ── Init ──
+async function getDbAsync() {
+  await connectWithRetry();
+  const state = await GameState.findOne({ key: 'game_active' });
+  if (!state) {
+    await GameState.create({ key: 'game_active', value: 'true' });
+  }
 }
 
-function qAll(sql, p = []) {
-  if (!db) throw new Error('Database not initialized');
-  let st;
+// ── Team CRUD ──
+async function createTeam(id, name, password = '') {
+  const session = await mongoose.startSession();
   try {
-    st = db.prepare(sql);
-    if (p.length) st.bind(p);
-    const r = [];
-    while (st.step()) r.push(st.getAsObject());
-    return r;
+    session.startTransaction();
+    await Team.create([{ id, team_name: name, password }], { session });
+    const progressDocs = [];
+    for (let i = 1; i <= 10; i++) {
+      progressDocs.push({ team_id: id, room_number: i });
+    }
+    await RoomProgress.insertMany(progressDocs, { session });
+    await session.commitTransaction();
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
   } finally {
-    if (st) try { st.free(); } catch (_) {}
+    session.endSession();
   }
 }
-function qOne(sql, p = []) { const r = qAll(sql, p); return r[0] || null; }
 
-function createTeam(id, name, password = '') {
-  db.run("INSERT INTO teams (id, team_name, password) VALUES (?, ?, ?)", [id, name, password]);
-  for (let i = 1; i <= 10; i++)
-    db.run("INSERT INTO room_progress (team_id, room_number) VALUES (?, ?)", [id, i]);
-  save();
-}
-function getTeam(id) { return qOne("SELECT * FROM teams WHERE id=?", [id]); }
-function getTeamByName(n) { return qOne("SELECT * FROM teams WHERE team_name=?", [n]); }
-function updateTeam(teamId, newName, newPassword) {
-  db.run("UPDATE teams SET team_name=?, password=? WHERE id=?", [newName, newPassword, teamId]);
-  save();
-}
-function deleteTeam(teamId) {
-  db.run("DELETE FROM chat_logs WHERE team_id=?", [teamId]);
-  db.run("DELETE FROM room_progress WHERE team_id=?", [teamId]);
-  db.run("DELETE FROM api_requests WHERE team_id=?", [teamId]);
-  db.run("DELETE FROM teams WHERE id=?", [teamId]);
-  save();
+async function getTeam(id) {
+  return await Team.findOne({ id }).lean();
 }
 
-function getRoomProgress(teamId, room) {
-  return qOne("SELECT * FROM room_progress WHERE team_id=? AND room_number=?", [teamId, room])
-    || { solved: 0, attempts: 0, score_earned: 0, hints_used: '[]' };
-}
-function getAllProgress(teamId) {
-  return qAll("SELECT * FROM room_progress WHERE team_id=? ORDER BY room_number", [teamId]);
+async function getTeamByName(n) {
+  return await Team.findOne({ team_name: n }).lean();
 }
 
-function incrementAttempts(teamId, room) {
-  db.run("UPDATE room_progress SET attempts=attempts+1 WHERE team_id=? AND room_number=?", [teamId, room]);
-  save();
-}
-function solveRoom(teamId, room, score, prompt) {
-  db.run("UPDATE room_progress SET solved=1, score_earned=?, solved_at=datetime('now'), winning_prompt=? WHERE team_id=? AND room_number=?",
-    [score, prompt, teamId, room]);
-  db.run("UPDATE teams SET total_score=total_score+?, current_room=MAX(current_room,?) WHERE id=?",
-    [score, room + 1, teamId]);
-  save();
-}
-function deductScore(teamId, amount) {
-  db.run("UPDATE teams SET total_score=MAX(0,total_score-?) WHERE id=?", [amount, teamId]);
-  save();
-}
-function updateHintsUsed(teamId, room, hints) {
-  db.run("UPDATE room_progress SET hints_used=? WHERE team_id=? AND room_number=?",
-    [JSON.stringify(hints), teamId, room]);
-  save();
-}
-function skipRoom(teamId, room) {
-  db.run("UPDATE room_progress SET solved=0 WHERE team_id=? AND room_number=?", [teamId, room]);
-  db.run("UPDATE teams SET current_room=MAX(current_room,?) WHERE id=?", [room + 1, teamId]);
-  save();
+async function updateTeam(teamId, newName, newPassword) {
+  await Team.updateOne({ id: teamId }, { team_name: newName, password: newPassword });
 }
 
-function saveChat(teamId, room, role, message) {
-  db.run("INSERT INTO chat_logs (team_id, room_number, role, message) VALUES (?,?,?,?)",
-    [teamId, room, role, message]);
-  save();
-}
-function getChatHistory(teamId, room) {
-  return qAll("SELECT role, message as content FROM chat_logs WHERE team_id=? AND room_number=? ORDER BY timestamp", [teamId, room]);
+async function deleteTeam(teamId) {
+  await ChatLog.deleteMany({ team_id: teamId });
+  await RoomProgress.deleteMany({ team_id: teamId });
+  await ApiRequest.deleteMany({ team_id: teamId });
+  await Team.deleteOne({ id: teamId });
 }
 
-function getLeaderboard(limit = 10) {
-  return qAll(`SELECT t.team_name, t.total_score, t.current_room,
-    (SELECT COUNT(*) FROM room_progress WHERE team_id=t.id AND solved=1) as rooms_solved
-    FROM teams t ORDER BY t.total_score DESC, t.current_room DESC LIMIT ?`, [limit]);
+// ── Room Progress ──
+async function getRoomProgress(teamId, room) {
+  const p = await RoomProgress.findOne({ team_id: teamId, room_number: room }).lean();
+  return p || { solved: false, attempts: 0, score_earned: 0, hints_used: '[]' };
 }
-function getAllTeams() {
-  return qAll(`SELECT t.*, (SELECT COUNT(*) FROM room_progress WHERE team_id=t.id AND solved=1) as rooms_solved,
-    (SELECT SUM(attempts) FROM room_progress WHERE team_id=t.id) as total_attempts FROM teams t ORDER BY t.total_score DESC`);
-}
-function getWinningPrompts() {
-  return qAll("SELECT rp.room_number, rp.winning_prompt, t.team_name FROM room_progress rp JOIN teams t ON rp.team_id=t.id WHERE rp.solved=1 AND rp.winning_prompt IS NOT NULL ORDER BY rp.room_number");
-}
-function resetAll() { db.run("DELETE FROM chat_logs"); db.run("DELETE FROM room_progress"); db.run("DELETE FROM teams"); save(); }
-function getGameState(k) { const r = qOne("SELECT value FROM game_state WHERE key=?", [k]); return r ? r.value : null; }
-function setGameState(k, v) { db.run("INSERT OR REPLACE INTO game_state (key,value) VALUES (?,?)", [k, v]); save(); }
 
-// ── API Request Tracking ──
-function logApiRequest(teamId, roomNumber) {
-  db.run("INSERT INTO api_requests (team_id, room_number) VALUES (?, ?)", [teamId, roomNumber]);
-  save();
+async function getAllProgress(teamId) {
+  return await RoomProgress.find({ team_id: teamId }).sort({ room_number: 1 }).lean();
 }
-function getApiRequestStats() {
-  const total = qOne("SELECT COUNT(*) as count FROM api_requests");
-  const today = qOne("SELECT COUNT(*) as count FROM api_requests WHERE date(requested_at) = date('now')");
-  const lastHour = qOne("SELECT COUNT(*) as count FROM api_requests WHERE requested_at >= datetime('now', '-1 hour')");
-  const byRoom = qAll("SELECT room_number, COUNT(*) as count FROM api_requests GROUP BY room_number ORDER BY room_number");
-  const byHour = qAll(`SELECT strftime('%H:00', requested_at) as hour, COUNT(*) as count
-    FROM api_requests WHERE date(requested_at) = date('now')
-    GROUP BY strftime('%H', requested_at) ORDER BY hour`);
-  return {
-    total: total?.count || 0,
-    today: today?.count || 0,
-    lastHour: lastHour?.count || 0,
-    byRoom, byHour,
-  };
+
+async function incrementAttempts(teamId, room) {
+  await RoomProgress.updateOne(
+    { team_id: teamId, room_number: room },
+    { $inc: { attempts: 1 } }
+  );
 }
-function resetApiRequests() { db.run("DELETE FROM api_requests"); save(); }
+
+// ── CRITICAL FIX: Atomic solveRoom — prevents double-scoring race condition ──
+async function solveRoom(teamId, room, score, prompt) {
+  // Atomically mark solved ONLY if not already solved (prevents double-score)
+  const result = await RoomProgress.updateOne(
+    { team_id: teamId, room_number: room, solved: { $ne: true } },
+    { solved: true, score_earned: score, solved_at: new Date(), winning_prompt: prompt }
+  );
+
+  // If modifiedCount === 0, the room was already solved (race condition blocked)
+  if (result.modifiedCount === 0) {
+    console.warn(`⚠️ solveRoom race blocked: team=${teamId} room=${room} already solved`);
+    return false;
+  }
+
+  await Team.updateOne(
+    { id: teamId },
+    { $inc: { total_score: score }, $max: { current_room: room + 1 } }
+  );
+  return true;
+}
+
+async function deductScore(teamId, amount) {
+  const team = await Team.findOne({ id: teamId });
+  if (team) {
+    team.total_score = Math.max(0, team.total_score - amount);
+    await team.save();
+  }
+}
+
+async function updateHintsUsed(teamId, room, hints) {
+  await RoomProgress.updateOne(
+    { team_id: teamId, room_number: room },
+    { hints_used: JSON.stringify(hints) }
+  );
+}
+
+async function skipRoom(teamId, room) {
+  await RoomProgress.updateOne(
+    { team_id: teamId, room_number: room },
+    { solved: false }
+  );
+  await Team.updateOne(
+    { id: teamId },
+    { $max: { current_room: room + 1 } }
+  );
+}
+
+// ── Chat ──
+async function saveChat(teamId, room, role, message) {
+  await ChatLog.create({ team_id: teamId, room_number: room, role, message });
+}
+
+async function getChatHistory(teamId, room) {
+  const logs = await ChatLog.find({ team_id: teamId, room_number: room }).sort({ timestamp: 1 }).lean();
+  return logs.map(l => ({ role: l.role, content: l.message }));
+}
+
+// ── CRITICAL FIX: Leaderboard — aggregation pipeline instead of N+1 queries ──
+async function getLeaderboard(limit = 10) {
+  const results = await Team.aggregate([
+    { $sort: { total_score: -1, current_room: -1 } },
+    { $limit: limit },
+    {
+      $lookup: {
+        from: 'roomprogresses',
+        let: { teamId: '$id' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$team_id', '$$teamId'] }, { $eq: ['$solved', true] }] } } },
+          { $count: 'count' }
+        ],
+        as: 'solved_info'
+      }
+    },
+    {
+      $addFields: {
+        rooms_solved: {
+          $ifNull: [{ $arrayElemAt: ['$solved_info.count', 0] }, 0]
+        }
+      }
+    },
+    { $project: { solved_info: 0, _id: 0, __v: 0 } }
+  ]);
+  return results;
+}
+
+// ── CRITICAL FIX: getAllTeams — aggregation pipeline instead of N+1 queries ──
+async function getAllTeams() {
+  const results = await Team.aggregate([
+    { $sort: { total_score: -1 } },
+    {
+      $lookup: {
+        from: 'roomprogresses',
+        let: { teamId: '$id' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$team_id', '$$teamId'] } } },
+          {
+            $group: {
+              _id: null,
+              rooms_solved: { $sum: { $cond: ['$solved', 1, 0] } },
+              total_attempts: { $sum: '$attempts' }
+            }
+          }
+        ],
+        as: 'progress_info'
+      }
+    },
+    {
+      $addFields: {
+        rooms_solved: { $ifNull: [{ $arrayElemAt: ['$progress_info.rooms_solved', 0] }, 0] },
+        total_attempts: { $ifNull: [{ $arrayElemAt: ['$progress_info.total_attempts', 0] }, 0] }
+      }
+    },
+    { $project: { progress_info: 0, _id: 0, __v: 0 } }
+  ]);
+  return results;
+}
+
+async function getWinningPrompts() {
+  const results = await RoomProgress.aggregate([
+    { $match: { solved: true, winning_prompt: { $ne: null } } },
+    { $lookup: { from: 'teams', localField: 'team_id', foreignField: 'id', as: 'team' } },
+    { $unwind: '$team' },
+    { $project: { room_number: 1, winning_prompt: 1, team_name: '$team.team_name' } },
+    { $sort: { room_number: 1 } }
+  ]);
+  return results;
+}
+
+async function resetAll() {
+  await ChatLog.deleteMany({});
+  await RoomProgress.deleteMany({});
+  await Team.deleteMany({});
+}
+
+// ── Game State ──
+async function getGameState(k) {
+  const r = await GameState.findOne({ key: k }).lean();
+  return r ? r.value : null;
+}
+
+async function setGameState(k, v) {
+  await GameState.updateOne({ key: k }, { value: v }, { upsert: true });
+}
+
+// ── API Request Logging ──
+async function logApiRequest(teamId, roomNumber) {
+  await ApiRequest.create({ team_id: teamId, room_number: roomNumber });
+}
+
+async function getApiRequestStats() {
+  const total = await ApiRequest.countDocuments();
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const today = await ApiRequest.countDocuments({ requested_at: { $gte: startOfDay } });
+
+  const hAgo = new Date(Date.now() - 3600000);
+  const lastHour = await ApiRequest.countDocuments({ requested_at: { $gte: hAgo } });
+
+  const byRoomAggr = await ApiRequest.aggregate([
+    { $group: { _id: '$room_number', count: { $sum: 1 } } },
+    { $sort: { _id: 1 } }
+  ]);
+  const byRoom = byRoomAggr.map(b => ({ room_number: b._id, count: b.count }));
+
+  const byHourAggr = await ApiRequest.aggregate([
+    { $match: { requested_at: { $gte: startOfDay } } },
+    {
+      $group: {
+        _id: { $hour: "$requested_at" },
+        count: { $sum: 1 }
+      }
+    },
+    { $sort: { _id: 1 } }
+  ]);
+
+  const byHour = byHourAggr.map(b => {
+    const hh = String(b._id).padStart(2, '0') + ':00';
+    return { hour: hh, count: b.count };
+  });
+
+  return { total, today, lastHour, byRoom, byHour };
+}
+
+async function resetApiRequests() {
+  await ApiRequest.deleteMany({});
+}
+
+// ── Graceful Shutdown — close MongoDB connection properly ──
+function flushSync() {
+  // Close mongoose connection gracefully
+  try {
+    mongoose.connection.close(false);
+    console.log('✅ MongoDB connection closed');
+  } catch (e) {
+    console.error('MongoDB close error:', e.message);
+  }
+}
 
 module.exports = {
   getDbAsync, createTeam, getTeam, getTeamByName, updateTeam, deleteTeam,
