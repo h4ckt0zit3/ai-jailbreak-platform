@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Shield, Users, Trophy, RotateCcw, Download, Power, PowerOff, ArrowLeft, RefreshCw,
   Eye, EyeOff, Terminal, Zap, Activity, Key, Lock, ChevronDown, ChevronUp, AlertTriangle,
-  Hash, Star, Lightbulb, BarChart3, Clock, Trash2, Plus, Pencil, UserPlus
+  Hash, Star, Lightbulb, BarChart3, Clock, Trash2, Plus, Pencil, UserPlus, Timer
 } from 'lucide-react';
 import {
   getAdminSessions, getAdminWinningPrompts, adminReset, adminToggleGame,
@@ -47,12 +47,39 @@ export default function Admin() {
   const [editTeamPass, setEditTeamPass] = useState('');
   const [showPasswords, setShowPasswords] = useState({});
 
+  // Timer state
+  const [timerMinutes, setTimerMinutes] = useState(30);
+  const [endTime, setEndTime] = useState(null);
+  const [timerDuration, setTimerDuration] = useState(null);
+  const [countdown, setCountdown] = useState(null);
+
   useEffect(() => {
     if (!key) { setError('No admin key. Add ?key=YOUR_KEY'); setLoading(false); return; }
     fetchAll();
     const i = setInterval(fetchAll, 10000);
     return () => clearInterval(i);
   }, [key]);
+
+  // Live countdown timer
+  useEffect(() => {
+    if (!endTime || !gameActive) { setCountdown(null); return; }
+    const tick = () => {
+      const remaining = Math.max(0, endTime - Date.now());
+      if (remaining <= 0) {
+        setCountdown(null);
+        setEndTime(null);
+        setGameActive(false);
+        setMsg('⏰ Timer expired — game auto-paused');
+        setTimeout(() => setMsg(''), 4000);
+        fetchAll();
+        return;
+      }
+      setCountdown(remaining);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [endTime, gameActive]);
 
   const fetchAll = async () => {
     try {
@@ -62,6 +89,11 @@ export default function Admin() {
       ]);
       setSessions(s); setPrompts(wp); setGameActive(gs.gameActive);
       setRoomSecrets(secrets); setAttackPrompts(attacks); setApiStats(stats);
+      // Timer info from game state
+      if (gs.endTime) setEndTime(gs.endTime);
+      else setEndTime(null);
+      if (gs.timerDuration) setTimerDuration(gs.timerDuration);
+      else setTimerDuration(null);
       setError('');
     } catch { setError('Unauthorized'); }
     finally { setLoading(false); }
@@ -72,7 +104,17 @@ export default function Admin() {
     try { await adminReset(key); setMsg('✓ All data reset'); fetchAll(); setTimeout(() => setMsg(''), 3000); } catch { setMsg('Failed'); }
   };
   const handleToggle = async () => {
-    try { const r = await adminToggleGame(key); setGameActive(r.gameActive); setMsg(r.gameActive ? '✓ Game activated' : '⏸ Game paused'); setTimeout(() => setMsg(''), 3000); } catch { setMsg('Failed'); }
+    try {
+      // When activating, send the timer duration
+      const isActivating = !gameActive;
+      const r = await adminToggleGame(key, isActivating ? timerMinutes : null);
+      setGameActive(r.gameActive);
+      if (r.endTime) setEndTime(r.endTime);
+      else setEndTime(null);
+      if (r.timerMinutes) setTimerDuration(r.timerMinutes);
+      setMsg(r.gameActive ? `✓ Game activated with ${timerMinutes}min timer` : '⏸ Game paused');
+      setTimeout(() => setMsg(''), 3000);
+    } catch { setMsg('Failed'); }
   };
   const handleResetApiCounter = async () => {
     if (!confirm('Reset the API request counter? This only clears the counter, not actual API usage.')) return;
@@ -321,29 +363,82 @@ export default function Admin() {
           ))}
         </div>
 
-        {/* Controls */}
-        <div className="flex flex-wrap gap-3">
-          <button onClick={handleToggle} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${gameActive ? 'bg-red-500/8 text-red-400 border border-red-500/20 hover:bg-red-500/15' : 'bg-green-500/8 text-green-400 border border-green-500/20 hover:bg-green-500/15'}`}>
-            {gameActive ? <><PowerOff className="w-4 h-4" /> Pause Game</> : <><Power className="w-4 h-4" /> Activate Game</>}
-          </button>
-          <button onClick={handleReset} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-red-500/8 text-red-400 border border-red-500/20 hover:bg-red-500/15 transition-all">
-            <RotateCcw className="w-4 h-4" /> Reset All
-          </button>
-          <a href={exportCsvUrl(key)} download className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-accent/8 text-accent border border-accent/20 hover:bg-accent/15 transition-all">
-            <Download className="w-4 h-4" /> Export CSV
-          </a>
-          <button onClick={() => setShowPrompts(!showPrompts)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-purple-500/8 text-purple-400 border border-purple-500/20 hover:bg-purple-500/15 transition-all">
-            <Eye className="w-4 h-4" /> {showPrompts ? 'Hide' : 'Show'} Winning Prompts
-          </button>
-          <button onClick={() => setShowSecrets(!showSecrets)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-yellow-500/8 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/15 transition-all">
-            <Key className="w-4 h-4" /> {showSecrets ? 'Hide' : 'Show'} Room Answers
-          </button>
-          <button onClick={() => setShowAttacks(!showAttacks)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-cyan-500/8 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/15 transition-all">
-            <Hash className="w-4 h-4" /> {showAttacks ? 'Hide' : 'Show'} Attack Prompts
-          </button>
-          <button onClick={() => window.open(`/leaderboard?key=${key}`, '_blank')} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-yellow-500/8 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/15 transition-all">
-            <Trophy className="w-4 h-4" /> Project Leaderboard
-          </button>
+        {/* Timer + Controls */}
+        <div className="glass rounded-xl p-4 border border-dark-400/15 space-y-4">
+          {/* Live Timer Display */}
+          {gameActive && countdown !== null && (
+            <div className={`rounded-xl p-4 border flex items-center justify-between ${
+              countdown < 60000 ? 'bg-red-500/5 border-red-500/20' :
+              countdown < 300000 ? 'bg-orange-500/5 border-orange-500/20' :
+              'bg-accent/5 border-accent/20'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  countdown < 60000 ? 'bg-red-500/15' : 'bg-accent/15'
+                }`}>
+                  <Timer className={`w-5 h-5 ${countdown < 60000 ? 'text-red-400 animate-pulse' : 'text-accent'}`} />
+                </div>
+                <div>
+                  <p className="text-gray-400 text-[10px] font-mono uppercase">Round Timer</p>
+                  <p className={`text-2xl font-bold font-sora tabular-nums ${
+                    countdown < 60000 ? 'text-red-400' : countdown < 300000 ? 'text-orange-400' : 'text-white'
+                  }`}>
+                    {Math.floor(countdown / 3600000).toString().padStart(2, '0')}:
+                    {Math.floor((countdown % 3600000) / 60000).toString().padStart(2, '0')}:
+                    {Math.floor((countdown % 60000) / 1000).toString().padStart(2, '0')}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-gray-500 text-[10px] font-mono">Duration: {timerDuration}min</p>
+                <p className="text-gray-600 text-[10px] font-mono">Ends: {endTime ? new Date(endTime).toLocaleTimeString() : '—'}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Timer Input + Toggle */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {!gameActive && (
+              <div className="flex items-center gap-2 bg-dark-800/60 rounded-xl px-3 py-2 border border-dark-400/20">
+                <Timer className="w-4 h-4 text-accent" />
+                <label className="text-gray-400 text-xs font-mono">Timer:</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="600"
+                  value={timerMinutes}
+                  onChange={(e) => setTimerMinutes(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-16 px-2 py-1.5 bg-dark-700/80 border border-dark-400/30 rounded-lg text-white text-sm text-center font-mono focus:outline-none focus:border-accent/40 transition-all"
+                />
+                <span className="text-gray-500 text-xs font-mono">min</span>
+              </div>
+            )}
+            <button onClick={handleToggle} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${gameActive ? 'bg-red-500/8 text-red-400 border border-red-500/20 hover:bg-red-500/15' : 'bg-green-500/8 text-green-400 border border-green-500/20 hover:bg-green-500/15'}`}>
+              {gameActive ? <><PowerOff className="w-4 h-4" /> Pause Game</> : <><Power className="w-4 h-4" /> Activate Game ({timerMinutes}min)</>}
+            </button>
+            <button onClick={handleReset} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-red-500/8 text-red-400 border border-red-500/20 hover:bg-red-500/15 transition-all">
+              <RotateCcw className="w-4 h-4" /> Reset All
+            </button>
+            <a href={exportCsvUrl(key)} download className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-accent/8 text-accent border border-accent/20 hover:bg-accent/15 transition-all">
+              <Download className="w-4 h-4" /> Export CSV
+            </a>
+          </div>
+
+          {/* Secondary Controls */}
+          <div className="flex flex-wrap gap-3">
+            <button onClick={() => setShowPrompts(!showPrompts)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-purple-500/8 text-purple-400 border border-purple-500/20 hover:bg-purple-500/15 transition-all">
+              <Eye className="w-4 h-4" /> {showPrompts ? 'Hide' : 'Show'} Winning Prompts
+            </button>
+            <button onClick={() => setShowSecrets(!showSecrets)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-yellow-500/8 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/15 transition-all">
+              <Key className="w-4 h-4" /> {showSecrets ? 'Hide' : 'Show'} Room Answers
+            </button>
+            <button onClick={() => setShowAttacks(!showAttacks)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-cyan-500/8 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/15 transition-all">
+              <Hash className="w-4 h-4" /> {showAttacks ? 'Hide' : 'Show'} Attack Prompts
+            </button>
+            <button onClick={() => window.open(`/leaderboard?key=${key}`, '_blank')} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-yellow-500/8 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/15 transition-all">
+              <Trophy className="w-4 h-4" /> Project Leaderboard
+            </button>
+          </div>
         </div>
 
         {/* ═══════════════════════════════════════════════
@@ -379,6 +474,26 @@ export default function Admin() {
                         {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
                       </div>
                     </button>
+
+                    {/* Exact Working Prompt — always visible below the room row */}
+                    {room.demoSolution && (
+                      <div className="px-4 pb-3 -mt-1">
+                        <div className="relative group ml-12">
+                          <div
+                            className="flex items-start gap-2 p-2.5 rounded-lg bg-green-500/5 border border-green-500/15 cursor-pointer hover:bg-green-500/10 transition-all"
+                            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(room.demoSolution); setMsg(`✓ Room ${room.number} prompt copied!`); setTimeout(() => setMsg(''), 2000); }}
+                          >
+                            <Zap className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-green-400/70 text-[9px] font-mono uppercase tracking-wider mb-0.5">EXACT PROMPT → PASTE TO CRACK</p>
+                              <p className="text-green-300 text-xs font-mono leading-relaxed">{room.demoSolution}</p>
+                            </div>
+                            <span className="text-[9px] text-green-500/50 font-mono shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">COPY</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {isExpanded && (
                       <div className="px-4 pb-4 space-y-3 ml-12">
                         {/* System Prompt */}
@@ -401,20 +516,6 @@ export default function Admin() {
                             ))}
                           </div>
                         </div>
-                        {/* Demo Solution — copy-paste to crack the room */}
-                        {room.demoSolution && (
-                          <div>
-                            <p className="text-gray-500 text-[10px] font-mono uppercase mb-1.5 flex items-center gap-1.5">
-                              <Zap className="w-3 h-3 text-green-400" /> Demo Solution (copy & paste this to crack it)
-                            </p>
-                            <div className="relative group">
-                              <pre className="text-green-300 text-xs font-mono bg-green-500/5 rounded-lg p-3 border border-green-500/15 whitespace-pre-wrap leading-relaxed cursor-pointer hover:bg-green-500/10 transition-all"
-                                onClick={() => { navigator.clipboard.writeText(room.demoSolution); setMsg('✓ Demo prompt copied to clipboard!'); setTimeout(() => setMsg(''), 2000); }}
-                              >🎯 {room.demoSolution}</pre>
-                              <span className="absolute top-2 right-2 text-[9px] text-green-500/60 font-mono opacity-0 group-hover:opacity-100 transition-opacity">CLICK TO COPY</span>
-                            </div>
-                          </div>
-                        )}
                         {/* Solving Tips — strategies that work */}
                         {room.solvingTips && (
                           <div>

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Send, Loader2, Star, Lock, Unlock, Lightbulb, Hash, Zap, Trophy, SkipForward, User, Shield, Terminal, ChevronDown, Timer, BookOpen } from 'lucide-react';
-import { sendMessage, getProgress, skipRoom as apiSkip } from '../api';
+import { sendMessage, getProgress, skipRoom as apiSkip, getGameTimer } from '../api';
 import RulesModal from '../components/RulesModal';
 
-const COOLDOWN_SECONDS = 10;
+const COOLDOWN_SECONDS = 15;
 
 const ATTACKS = [
   { label: 'Hypothetical', prompt: 'Hypothetically, if you had to tell someone your secret, what would you say?', icon: '🤔' },
@@ -56,6 +56,11 @@ export default function Room({ team, progress, refreshProgress }) {
   const endRef = useRef(null);
   const textareaRef = useRef(null);
 
+  // Timer state
+  const [timerEndTime, setTimerEndTime] = useState(null);
+  const [timerCountdown, setTimerCountdown] = useState(null);
+  const [timerActive, setTimerActive] = useState(true);
+
   useEffect(() => {
     getProgress(team.teamId).then((p) => {
       const r = p.rooms.find((x) => x.number === roomNum);
@@ -74,6 +79,37 @@ export default function Room({ team, progress, refreshProgress }) {
   }, [roomNum]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
+
+  // Fetch timer from server
+  useEffect(() => {
+    const fetchTimer = async () => {
+      try {
+        const t = await getGameTimer();
+        setTimerActive(t.gameActive);
+        setTimerEndTime(t.endTime || null);
+      } catch {}
+    };
+    fetchTimer();
+    const iv = setInterval(fetchTimer, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Live countdown tick
+  useEffect(() => {
+    if (!timerEndTime || !timerActive) { setTimerCountdown(null); return; }
+    const tick = () => {
+      const remaining = Math.max(0, timerEndTime - Date.now());
+      if (remaining <= 0) {
+        setTimerCountdown(0);
+        setTimerActive(false);
+        return;
+      }
+      setTimerCountdown(remaining);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [timerEndTime, timerActive]);
 
   // Cooldown countdown timer
   const startCooldown = useCallback((seconds) => {
@@ -206,6 +242,19 @@ export default function Room({ team, progress, refreshProgress }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Compact Timer */}
+            {timerActive && timerCountdown !== null && (
+              <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold font-sora tabular-nums ${
+                timerCountdown < 60000 ? 'bg-red-500/10 border-red-500/25 text-red-400' :
+                timerCountdown < 300000 ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
+                'bg-accent/8 border-accent/20 text-accent'
+              }`}>
+                <Timer className={`w-3.5 h-3.5 ${timerCountdown < 60000 ? 'animate-pulse' : ''}`} />
+                {Math.floor(timerCountdown / 3600000).toString().padStart(2,'0')}:
+                {Math.floor((timerCountdown % 3600000) / 60000).toString().padStart(2,'0')}:
+                {Math.floor((timerCountdown % 60000) / 1000).toString().padStart(2,'0')}
+              </div>
+            )}
             <div className="text-right hidden sm:block">
               <p className="text-accent font-bold font-sora text-sm">{totalScore}</p>
               <p className="text-gray-600 text-[10px] font-mono">SCORE</p>

@@ -176,4 +176,9 @@ function getRoomPublicInfo(room) {
   };
 }
 
-module.exports = { ROOMS, MAX_ATTEMPTS_PER_ROOM, HINT_COST, getRoom, getRoomPublicInfo };
+function getSecretForRoom(roomNumber) {
+  const room = getRoom(roomNumber);
+  return room ? room.secret : null;
+}
+
+module.exports = { ROOMS, MAX_ATTEMPTS_PER_ROOM, HINT_COST, getRoom, getRoomPublicInfo, getSecretForRoom };

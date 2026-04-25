@@ -40,12 +40,21 @@ export async function adminReset(key) {
   const r = await fetch(`${API}/admin/reset`, { method: 'POST', headers: { 'x-admin-key': key } });
   if (!r.ok) throw new Error('Failed'); return r.json();
 }
-export async function adminToggleGame(key) {
-  const r = await fetch(`${API}/admin/toggle-game`, { method: 'POST', headers: { 'x-admin-key': key } });
+export async function adminToggleGame(key, timerMinutes = null) {
+  const body = timerMinutes ? JSON.stringify({ timerMinutes }) : '{}';
+  const r = await fetch(`${API}/admin/toggle-game`, {
+    method: 'POST',
+    headers: h({ 'x-admin-key': key }),
+    body,
+  });
   if (!r.ok) throw new Error('Failed'); return r.json();
 }
 export async function adminGameState(key) {
   const r = await fetch(`${API}/admin/game-state`, { headers: { 'x-admin-key': key } });
+  if (!r.ok) throw new Error('Failed'); return r.json();
+}
+export async function getGameTimer() {
+  const r = await fetch(`${API}/game-timer`);
   if (!r.ok) throw new Error('Failed'); return r.json();
 }
 export async function getAdminRoomSecrets(key) {

@@ -1,17 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, Unlock, CheckCircle, Star, ArrowRight, Zap, Target, LogOut, BookOpen } from 'lucide-react';
-import { getProgress } from '../api';
+import { Shield, Lock, Unlock, CheckCircle, Star, ArrowRight, Zap, Target, LogOut, BookOpen, Timer, AlertTriangle } from 'lucide-react';
+import { getProgress, getGameTimer } from '../api';
 import RulesModal from '../components/RulesModal';
 
 const DIFF_COLORS = { 1: 'text-green-400', 2: 'text-green-400', 3: 'text-yellow-400', 4: 'text-orange-400', 5: 'text-red-400' };
 const DIFF_BG = { 1: 'bg-green-500/10 border-green-500/20', 2: 'bg-green-500/10 border-green-500/20', 3: 'bg-yellow-500/10 border-yellow-500/20', 4: 'bg-orange-500/10 border-orange-500/20', 5: 'bg-red-500/10 border-red-500/20' };
 const DIFF_LABEL = { 1: 'Easy', 2: 'Easy', 3: 'Medium', 4: 'Hard', 5: 'Expert' };
 
+function formatCountdown(ms) {
+  if (!ms || ms <= 0) return '00:00:00';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+}
+
 export default function Rooms({ team, progress, refreshProgress, onLogout }) {
   const nav = useNavigate();
   const [data, setData] = useState(progress);
   const [showRules, setShowRules] = useState(false);
+
+  // Timer state
+  const [gameActive, setGameActive] = useState(true);
+  const [endTime, setEndTime] = useState(null);
+  const [countdown, setCountdown] = useState(null);
 
   // Auto-show rules on first ever visit
   useEffect(() => {
@@ -28,6 +41,38 @@ export default function Rooms({ team, progress, refreshProgress, onLogout }) {
 
   useEffect(() => { if (progress) setData(progress); }, [progress]);
 
+  // Fetch timer from server every 30s
+  const fetchTimer = useCallback(async () => {
+    try {
+      const t = await getGameTimer();
+      setGameActive(t.gameActive);
+      setEndTime(t.endTime || null);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchTimer();
+    const iv = setInterval(fetchTimer, 30000);
+    return () => clearInterval(iv);
+  }, [fetchTimer]);
+
+  // Live countdown tick
+  useEffect(() => {
+    if (!endTime || !gameActive) { setCountdown(null); return; }
+    const tick = () => {
+      const remaining = Math.max(0, endTime - Date.now());
+      if (remaining <= 0) {
+        setCountdown(0);
+        setGameActive(false);
+        return;
+      }
+      setCountdown(remaining);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [endTime, gameActive]);
+
   if (!data) return (
     <div className="flex items-center justify-center h-screen bg-[#06060b]">
       <div className="flex flex-col items-center gap-3">
@@ -39,6 +84,8 @@ export default function Rooms({ team, progress, refreshProgress, onLogout }) {
 
   const solvedCount = data.rooms.filter((r) => r.solved).length;
   const progressPct = (solvedCount / 10) * 100;
+  const timerDanger = countdown !== null && countdown < 60000;
+  const timerWarning = countdown !== null && countdown < 300000;
 
   return (
     <div className="min-h-screen bg-[#06060b] relative">
@@ -60,6 +107,21 @@ export default function Rooms({ team, progress, refreshProgress, onLogout }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Timer Display in Header */}
+            {gameActive && countdown !== null && (
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
+                timerDanger ? 'bg-red-500/10 border-red-500/25' :
+                timerWarning ? 'bg-orange-500/10 border-orange-500/20' :
+                'bg-accent/8 border-accent/20'
+              }`}>
+                <Timer className={`w-4 h-4 ${timerDanger ? 'text-red-400 animate-pulse' : timerWarning ? 'text-orange-400' : 'text-accent'}`} />
+                <span className={`text-sm font-bold font-sora tabular-nums ${
+                  timerDanger ? 'text-red-400' : timerWarning ? 'text-orange-400' : 'text-accent'
+                }`}>
+                  {formatCountdown(countdown)}
+                </span>
+              </div>
+            )}
             <div className="text-right">
               <p className="text-accent font-bold text-xl font-sora">{data.totalScore}</p>
               <p className="text-gray-600 text-[10px] font-mono">SCORE</p>
@@ -74,8 +136,51 @@ export default function Rooms({ team, progress, refreshProgress, onLogout }) {
         </div>
       </div>
 
+      {/* Game Paused Banner */}
+      {!gameActive && (
+        <div className="max-w-6xl mx-auto px-4 pt-4 relative z-[1]">
+          <div className="rounded-xl p-4 bg-red-500/5 border border-red-500/20 flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+            <div>
+              <p className="text-red-400 text-sm font-semibold font-sora">Challenge Paused</p>
+              <p className="text-gray-500 text-xs">The game is currently paused by the admin. Please wait for the next round to begin.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timer Banner (large) - only when game is active with timer */}
+      {gameActive && countdown !== null && (
+        <div className="max-w-6xl mx-auto px-4 pt-4 relative z-[1]">
+          <div className={`rounded-xl p-4 flex items-center justify-between border ${
+            timerDanger ? 'bg-red-500/5 border-red-500/20' :
+            timerWarning ? 'bg-orange-500/5 border-orange-500/15' :
+            'bg-accent/5 border-accent/15'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                timerDanger ? 'bg-red-500/15' : 'bg-accent/10'
+              }`}>
+                <Timer className={`w-5 h-5 ${timerDanger ? 'text-red-400 animate-pulse' : 'text-accent'}`} />
+              </div>
+              <div>
+                <p className="text-gray-400 text-[10px] font-mono uppercase">⏱ Time Remaining</p>
+                <p className={`text-xl font-bold font-sora tabular-nums ${
+                  timerDanger ? 'text-red-400' : timerWarning ? 'text-orange-400' : 'text-white'
+                }`}>
+                  {formatCountdown(countdown)}
+                </p>
+              </div>
+            </div>
+            {timerDanger && (
+              <span className="text-red-400 text-xs font-mono animate-pulse">⚠ HURRY UP!</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Progress */}
-      <div className="max-w-6xl mx-auto px-4 pt-6 pb-2 relative z-[1]">
+      <div className="max-w-6xl mx-auto px-4 pt-4 pb-2 relative z-[1]">
         <div className="glass rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <div>
